@@ -24,7 +24,7 @@ const startMessageConsumer = () => {
                 console.log('Lambda result:', result);
             } catch (err) {
                 console.error('Lambda failed:', err);
-                throw err;
+                // throw err;
             }
         },
     });

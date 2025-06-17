@@ -4,11 +4,13 @@ const attachPromise = require('./attachPromise');
 
 const client = new SQSClient();
 const mongoUri = process.env.MONGODB_URL;
+const mongoUriWrite = process.env.MONGODB_WRITE_URL;
 const responseQueueUrl =
     process.env.MONGOACADEMY_QUERYPROCESSOR_TO_SOCKETSERVER_QUEUE_URL;
 const IS_LOCAL = process.env.IS_LOCAL || false;
 
 let mongoClient;
+let mongoClientWrite;
 
 const getMongoClient = async () => {
     if (mongoClient && mongoClient.topology?.isConnected()) {
@@ -22,8 +24,22 @@ const getMongoClient = async () => {
         serverSelectionTimeoutMS: 5000,
     });
 
-    await mongoClient.connect();
-    return mongoClient;
+    return await mongoClient.connect();
+};
+
+const getMongoClientWrite = async () => {
+    if (mongoClientWrite && mongoClientWrite.topology?.isConnected()) {
+        console.log('Reusing existing MongoDB write client');
+        return mongoClientWrite;
+    }
+
+    console.log('Initializing new MongoDB write client');
+    mongoClientWrite = new MongoClient(mongoUriWrite, {
+        maxPoolSize: 10,
+        serverSelectionTimeoutMS: 5000,
+    });
+
+    return await mongoClientWrite.connect();
 };
 
 const sendMessageToSQS = async (message, messageAttributes) => {
@@ -61,25 +77,62 @@ exports.handler = async (event) => {
         const { question, answer, socketId, submissionId } = body;
         const { questionId } = question;
 
-        const client = await getMongoClient();
-        console.log('Connected to MongoDB');
-        const MongoDB = client.db('mongoDbPractice');
+        const MongoClientRead = await getMongoClient();
+        const MongoClientWrite = await getMongoClientWrite();
 
-        const promises = attachPromise(MongoDB, question, answer, messageId);
+        console.log('Connected to MongoDB');
+
+        const promises = attachPromise(
+            MongoClientRead,
+            MongoClientWrite,
+            question,
+            answer,
+            messageId
+        );
 
         const promiseArray = [
             promises.question.promise || 'cached',
             promises.answer.promise || 'cached',
         ];
 
+        const transformMongoResult = (result) => {
+            if (result === null || result === undefined) {
+                return result;
+            }
+
+            if (Array.isArray(result)) {
+                return result.map((item) => transformMongoResult(item));
+            }
+
+            if (typeof result === 'object') {
+                // Convert MongoDB documents to plain objects
+                return JSON.parse(JSON.stringify(result));
+            }
+
+            return result;
+        };
+
         const [questionResult, answerResult] = await Promise.allSettled(
             promiseArray
         );
+
+        console.log('questionResult: ', questionResult);
+        console.log('answerResult: ', answerResult);
 
         if (questionResult.status === 'rejected')
             throw new Error(questionResult.reason);
         if (answerResult.status === 'rejected')
             throw new Error(answerResult.reason);
+
+        const transformedQuestionResult =
+            questionResult.value === 'cached'
+                ? 'cached'
+                : transformMongoResult(questionResult.value);
+
+        const transformedAnswerResult =
+            answerResult.value === 'cached'
+                ? 'cached'
+                : transformMongoResult(answerResult.value);
 
         const newMessageAttributes = Object.entries(messageAttributes).reduce(
             (acc, [key, value]) => {
@@ -97,13 +150,13 @@ exports.handler = async (event) => {
             socketId,
             submissionId,
             question:
-                questionResult.value === 'cached'
+                transformedQuestionResult === 'cached'
                     ? question
-                    : { ...question, resolved: questionResult.value },
+                    : { ...question, resolved: transformedQuestionResult },
             answer:
-                answerResult.value === 'cached'
+                transformedAnswerResult === 'cached'
                     ? answer
-                    : { ...answer, resolved: answerResult.value },
+                    : { ...answer, resolved: transformedAnswerResult },
         };
 
         console.log('responseObject: ', JSON.stringify(responseObject));

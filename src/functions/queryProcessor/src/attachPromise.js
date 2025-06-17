@@ -1,95 +1,172 @@
-const methodsReturningCursor = [
-    'find',
-    'aggregate',
-    'listIndexes',
-    'listCollections',
-];
+// * Commenting this as I think it is necessary for user to add .toArray() to the query as it is part of syntax
+// const methodsReturningCursor = [
+// 'find',
+// 'aggregate',
+// 'listIndexes',
+// 'listCollections',
+// ];
 
-const getQuestionPromise = (MongoDB, question, messageId) => {
-    const { data: questionData } = question;
-    const { collection, queryType, queryFilter, chainedOps } = questionData;
+const WRITE_OPS = new Set([
+    'insertOne',
+    'insertMany',
+    'updateOne',
+    'updateMany',
+    'deleteOne',
+    'deleteMany',
+]);
 
-    const mongoCollection = MongoDB.collection(collection);
+const getMongoPromise = async (
+    MongoClientRead,
+    MongoClientWrite,
+    item,
+    messageId
+) => {
+    const { data } = item;
+    const {
+        collection,
+        queryType,
+        queryFilter,
+        queryUpdate,
+        queryOptions,
+        chainedOps,
+    } = data;
 
-    if (typeof mongoCollection[queryType] === 'function') {
+    const dbName = 'mongoacademy-public';
+    const ReadMongoDB = MongoClientRead.db(dbName);
+    const WriteMongoDB = MongoClientWrite.db(dbName);
+
+    if (!WRITE_OPS.has(queryType)) {
+        console.log('DEVPATEL', queryFilter);
+
+        // Read operation
+        const mongoCollection = ReadMongoDB.collection(collection);
+
+        if (typeof mongoCollection[queryType] !== 'function') {
+            throw new Error(
+                `Invalid query type: ${queryType}\n messageId: ${messageId}`
+            );
+        }
+
         let query = mongoCollection[queryType](queryFilter);
-
-        // Apply chained operations
-        for (const op of chainedOps) {
+        for (const op of chainedOps || []) {
             query = query[op.operation](op.params);
         }
 
-        if (methodsReturningCursor.includes(queryType)) {
-            query = query.toArray();
-        }
-
         return query;
-    } else {
-        throw new Error(
-            `Invalid query type: ${queryType}\n messageId:${messageId}`
-        );
     }
+
+    // Write operation (simulated with rollback)
+    const session = MongoClientWrite.startSession();
+    const writeCollection = WriteMongoDB.collection(collection);
+    let simulatedDocs;
+
+    try {
+        await session.withTransaction(async () => {
+            switch (queryType) {
+                case 'insertOne':
+                    await writeCollection.insertOne(queryFilter, { session });
+                    break;
+
+                case 'insertMany':
+                    await writeCollection.insertMany(queryFilter, { session });
+                    break;
+
+                case 'updateOne':
+                    await writeCollection.updateOne(queryFilter, queryUpdate, {
+                        session,
+                        ...(queryOptions || {}),
+                    });
+                    break;
+
+                case 'updateMany':
+                    await writeCollection.updateMany(queryFilter, queryUpdate, {
+                        session,
+                        ...(queryOptions || {}),
+                    });
+                    break;
+
+                case 'deleteOne':
+                case 'deleteMany':
+                    await writeCollection[queryType](queryFilter, { session });
+                    break;
+            }
+
+            // remove _id from projection for insert operations as _id is always different due to which we can not compare the results
+            const projection = ['insertOne', 'insertMany'].includes(queryType)
+                ? { _id: 0 }
+                : {};
+            simulatedDocs = await writeCollection
+                .find({}, { session, projection })
+                .toArray();
+
+            throw new Error('Rollback after simulated write');
+        });
+    } catch (e) {
+        console.log(
+            `[messageId ${messageId}] Rollback complete (simulated ${queryType}):`,
+            e.message
+        );
+    } finally {
+        await session.endSession();
+    }
+
+    return simulatedDocs;
 };
 
-const getAnswerPromise = (MongoDB, answer, messageId) => {
-    const { data: answerData } = answer;
-    const { collection, queryType, queryFilter, chainedOps } = answerData;
-
-    const mongoCollection = MongoDB.collection(collection);
-
-    if (typeof mongoCollection[queryType] === 'function') {
-        let query = mongoCollection[queryType](queryFilter);
-
-        // Apply chained operations
-        for (const op of chainedOps) {
-            query = query[op.operation](op.params);
-        }
-
-        if (methodsReturningCursor.includes(queryType)) {
-            query = query.toArray();
-        }
-
-        return query;
-    } else {
-        throw new Error(
-            `Invalid query type: ${queryType}\n messageId:${messageId}`
-        );
-    }
-};
-
-const attachPromise = (MongoDB, question, answer, messageId) => {
+const attachPromise = (
+    MongodbRead,
+    MongodbWrite,
+    question,
+    answer,
+    messageId
+) => {
     const promises = {};
 
     if (!question.isResponseCached && !answer.isResponseCached) {
-        // question
-        const questionPromise = getQuestionPromise(
-            MongoDB,
-            question,
-            messageId
-        );
         Object.assign(promises, {
-            question: { ...question, promise: questionPromise },
-        });
-
-        // answer
-        const answerPromise = getAnswerPromise(MongoDB, answer, messageId);
-        Object.assign(promises, {
-            answer: { ...answer, promise: answerPromise },
+            question: {
+                ...question,
+                promise: getMongoPromise(
+                    MongodbRead,
+                    MongodbWrite,
+                    question,
+                    messageId
+                ),
+            },
+            answer: {
+                ...answer,
+                promise: getMongoPromise(
+                    MongodbRead,
+                    MongodbWrite,
+                    answer,
+                    messageId
+                ),
+            },
         });
     } else if (!question.isResponseCached) {
-        const questionPromise = getQuestionPromise(
-            MongoDB,
-            question,
-            messageId
-        );
         Object.assign(promises, {
-            question: { ...question, promise: questionPromise },
+            question: {
+                ...question,
+                promise: getMongoPromise(
+                    MongodbRead,
+                    MongodbWrite,
+                    question,
+                    messageId
+                ),
+            },
             answer,
         });
     } else if (!answer.isResponseCached) {
-        const answerPromise = getAnswerPromise(MongoDB, answer, messageId);
         Object.assign(promises, {
-            answer: { ...answer, promise: answerPromise },
+            answer: {
+                ...answer,
+                promise: getMongoPromise(
+                    MongodbRead,
+                    MongodbWrite,
+                    answer,
+                    messageId
+                ),
+            },
             question,
         });
     } else {
