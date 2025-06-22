@@ -9,8 +9,7 @@ const responseQueueUrl =
     process.env.MONGOACADEMY_QUERYPROCESSOR_TO_SOCKETSERVER_QUEUE_URL;
 const IS_LOCAL = process.env.IS_LOCAL || false;
 
-let mongoClient;
-let mongoClientWrite;
+let mongoClient, mongoClientWrite;
 
 const getMongoClient = async () => {
     if (mongoClient && mongoClient.topology?.isConnected()) {
@@ -51,35 +50,36 @@ const sendMessageToSQS = async (message, messageAttributes) => {
     await client.send(command);
 };
 
+const transformMongoResult = (result) => {
+    if (result == null) return result;
+    if (Array.isArray(result)) return result.map(transformMongoResult);
+    if (typeof result === 'object') return JSON.parse(JSON.stringify(result));
+    return result;
+};
+
 exports.handler = async (event) => {
     console.log('message came: ', JSON.stringify(event));
 
-    let ev;
-
-    if (IS_LOCAL) {
-        ev = {
-            body: event.Body,
-            messageAttributes: event.MessageAttributes,
-            messageId: event.MessageId,
-        };
-    } else {
-        ev = event.Records[0];
-    }
+    const ev = IS_LOCAL
+        ? {
+              body: event.Body,
+              messageAttributes: event.MessageAttributes,
+              messageId: event.MessageId,
+          }
+        : event.Records[0];
 
     const { body: eventRecordBody, messageAttributes, messageId } = ev;
-
     console.log('MessageId: ', messageId);
 
-    const body = JSON.parse(eventRecordBody);
-    console.log('body: ', JSON.stringify(body));
-
     try {
+        const body = JSON.parse(eventRecordBody);
+        console.log('body: ', JSON.stringify(body));
+
         const { question, answer, socketId, submissionId } = body;
         const { questionId } = question;
 
         const MongoClientRead = await getMongoClient();
         const MongoClientWrite = await getMongoClientWrite();
-
         console.log('Connected to MongoDB');
 
         const promises = attachPromise(
@@ -89,50 +89,44 @@ exports.handler = async (event) => {
             answer,
             messageId
         );
-
-        const promiseArray = [
+        const [questionResult, answerResult] = await Promise.allSettled([
             promises.question.promise || 'cached',
             promises.answer.promise || 'cached',
-        ];
+        ]);
 
-        const transformMongoResult = (result) => {
-            if (result === null || result === undefined) {
-                return result;
-            }
+        let errorFrom = '',
+            errorMessage = '';
 
-            if (Array.isArray(result)) {
-                return result.map((item) => transformMongoResult(item));
-            }
+        if (questionResult.status === 'rejected') {
+            console.error(
+                `Error processing question: ${questionResult.reason}`
+            );
+            errorMessage = 'Something went wrong';
+            errorFrom = 'question';
+        }
 
-            if (typeof result === 'object') {
-                // Convert MongoDB documents to plain objects
-                return JSON.parse(JSON.stringify(result));
-            }
+        if (answerResult.status === 'rejected') {
+            errorMessage =
+                answerResult.reason.message || 'Something went wrong';
+            errorFrom = 'answer';
+        }
 
-            return result;
+        const formatResult = (result, type, original) => {
+            if (errorFrom === type) return errorMessage;
+            if (result.value === 'cached') return 'cached';
+            return transformMongoResult(result.value);
         };
 
-        const [questionResult, answerResult] = await Promise.allSettled(
-            promiseArray
+        const transformedQuestionResult = formatResult(
+            questionResult,
+            'question',
+            question
         );
-
-        console.log('questionResult: ', questionResult);
-        console.log('answerResult: ', answerResult);
-
-        if (questionResult.status === 'rejected')
-            throw new Error(questionResult.reason);
-        if (answerResult.status === 'rejected')
-            throw new Error(answerResult.reason);
-
-        const transformedQuestionResult =
-            questionResult.value === 'cached'
-                ? 'cached'
-                : transformMongoResult(questionResult.value);
-
-        const transformedAnswerResult =
-            answerResult.value === 'cached'
-                ? 'cached'
-                : transformMongoResult(answerResult.value);
+        const transformedAnswerResult = formatResult(
+            answerResult,
+            'answer',
+            answer
+        );
 
         const newMessageAttributes = Object.entries(messageAttributes).reduce(
             (acc, [key, value]) => {
@@ -163,7 +157,7 @@ exports.handler = async (event) => {
         console.log('newMessageAttributes: ', newMessageAttributes);
 
         await sendMessageToSQS(responseObject, newMessageAttributes);
-        console.log('Query processed and response sent to SQS:');
+        console.log('Query processed and response sent to SQS');
 
         return {
             statusCode: 200,

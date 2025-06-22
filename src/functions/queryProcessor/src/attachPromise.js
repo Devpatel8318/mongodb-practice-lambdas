@@ -36,15 +36,11 @@ const getMongoPromise = async (
     const WriteMongoDB = MongoClientWrite.db(dbName);
 
     if (!WRITE_OPS.has(queryType)) {
-        console.log('DEVPATEL', queryFilter);
-
         // Read operation
         const mongoCollection = ReadMongoDB.collection(collection);
 
         if (typeof mongoCollection[queryType] !== 'function') {
-            throw new Error(
-                `Invalid query type: ${queryType}\n messageId: ${messageId}`
-            );
+            throw new Error(`Invalid query type: ${queryType}`);
         }
 
         let query = mongoCollection[queryType](queryFilter);
@@ -102,10 +98,7 @@ const getMongoPromise = async (
             throw new Error('Rollback after simulated write');
         });
     } catch (e) {
-        console.log(
-            `[messageId ${messageId}] Rollback complete (simulated ${queryType}):`,
-            e.message
-        );
+        // ignore
     } finally {
         await session.endSession();
     }
