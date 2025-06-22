@@ -1,27 +1,69 @@
-// * Commenting this as I think it is necessary for user to add .toArray() to the query as it is part of syntax
-// const methodsReturningCursor = [
-// 'find',
-// 'aggregate',
-// 'listIndexes',
-// 'listCollections',
-// ];
-
-const WRITE_OPS = new Set([
+const WRITE_OPS = [
     'insertOne',
     'insertMany',
     'updateOne',
     'updateMany',
     'deleteOne',
     'deleteMany',
-]);
+];
 
-const getMongoPromise = async (
-    MongoClientRead,
-    MongoClientWrite,
-    item,
-    messageId
+const DB_NAME = 'mongoacademy-public';
+
+const executeReadQuery = (
+    collection,
+    queryType,
+    queryFilter,
+    chainedOps = []
 ) => {
-    const { data } = item;
+    if (typeof collection[queryType] !== 'function') {
+        throw new Error(`Invalid query type: ${queryType}`);
+    }
+
+    let query = collection[queryType](queryFilter);
+    for (const { operation, params } of chainedOps) {
+        query = query[operation](params);
+    }
+
+    return query;
+};
+
+const executeSimulatedWriteQuery = async (
+    collection,
+    queryType,
+    queryFilter,
+    queryUpdate,
+    queryOptions,
+    session
+) => {
+    switch (queryType) {
+        case 'insertOne':
+            await collection.insertOne(queryFilter, { session });
+            break;
+        case 'insertMany':
+            await collection.insertMany(queryFilter, { session });
+            break;
+        case 'updateOne':
+        case 'updateMany':
+            await collection[queryType](queryFilter, queryUpdate, {
+                session,
+                ...(queryOptions || {}),
+            });
+            break;
+        case 'deleteOne':
+        case 'deleteMany':
+            await collection[queryType](queryFilter, { session });
+            break;
+    }
+
+    // remove _id from projection for insert operations as _id is always different due to which we can not compare the results
+    const projection = ['insertOne', 'insertMany'].includes(queryType)
+        ? { _id: 0 }
+        : {};
+
+    return await collection.find({}, { session, projection }).toArray();
+};
+
+const getMongoPromise = async (MongoClientRead, MongoClientWrite, item) => {
     const {
         collection,
         queryType,
@@ -29,76 +71,40 @@ const getMongoPromise = async (
         queryUpdate,
         queryOptions,
         chainedOps,
-    } = data;
+    } = item.data;
 
-    const dbName = 'mongoacademy-public';
-    const ReadMongoDB = MongoClientRead.db(dbName);
-    const WriteMongoDB = MongoClientWrite.db(dbName);
+    const ReadCollection = MongoClientRead.db(DB_NAME).collection(collection);
+    const WriteCollection = MongoClientWrite.db(DB_NAME).collection(collection);
 
-    if (!WRITE_OPS.has(queryType)) {
-        // Read operation
-        const mongoCollection = ReadMongoDB.collection(collection);
+    const isWriteOperation = WRITE_OPS.includes(queryType);
 
-        if (typeof mongoCollection[queryType] !== 'function') {
-            throw new Error(`Invalid query type: ${queryType}`);
-        }
-
-        let query = mongoCollection[queryType](queryFilter);
-        for (const op of chainedOps || []) {
-            query = query[op.operation](op.params);
-        }
-
-        return query;
+    if (!isWriteOperation) {
+        return executeReadQuery(
+            ReadCollection,
+            queryType,
+            queryFilter,
+            chainedOps
+        );
     }
 
-    // Write operation (simulated with rollback)
     const session = MongoClientWrite.startSession();
-    const writeCollection = WriteMongoDB.collection(collection);
     let simulatedDocs;
 
     try {
         await session.withTransaction(async () => {
-            switch (queryType) {
-                case 'insertOne':
-                    await writeCollection.insertOne(queryFilter, { session });
-                    break;
-
-                case 'insertMany':
-                    await writeCollection.insertMany(queryFilter, { session });
-                    break;
-
-                case 'updateOne':
-                    await writeCollection.updateOne(queryFilter, queryUpdate, {
-                        session,
-                        ...(queryOptions || {}),
-                    });
-                    break;
-
-                case 'updateMany':
-                    await writeCollection.updateMany(queryFilter, queryUpdate, {
-                        session,
-                        ...(queryOptions || {}),
-                    });
-                    break;
-
-                case 'deleteOne':
-                case 'deleteMany':
-                    await writeCollection[queryType](queryFilter, { session });
-                    break;
-            }
-
-            // remove _id from projection for insert operations as _id is always different due to which we can not compare the results
-            const projection = ['insertOne', 'insertMany'].includes(queryType)
-                ? { _id: 0 }
-                : {};
-            simulatedDocs = await writeCollection
-                .find({}, { session, projection })
-                .toArray();
+            simulatedDocs = await executeSimulatedWriteQuery(
+                WriteCollection,
+                queryType,
+                queryFilter,
+                queryUpdate,
+                queryOptions,
+                session
+            );
 
             throw new Error('Rollback after simulated write');
         });
-    } catch (e) {
-        // ignore
+    } catch (_) {
+        // ignore rollback error
     } finally {
         await session.endSession();
     }
@@ -107,67 +113,33 @@ const getMongoPromise = async (
 };
 
 const attachPromise = (
-    MongodbRead,
-    MongodbWrite,
+    MongoClientRead,
+    MongoClientWrite,
     question,
     answer,
     messageId
 ) => {
-    const promises = {};
+    const wrapWithPromise = (item) => ({
+        ...item,
+        promise: getMongoPromise(
+            MongoClientRead,
+            MongoClientWrite,
+            item,
+            messageId
+        ),
+    });
 
-    if (!question.isResponseCached && !answer.isResponseCached) {
-        Object.assign(promises, {
-            question: {
-                ...question,
-                promise: getMongoPromise(
-                    MongodbRead,
-                    MongodbWrite,
-                    question,
-                    messageId
-                ),
-            },
-            answer: {
-                ...answer,
-                promise: getMongoPromise(
-                    MongodbRead,
-                    MongodbWrite,
-                    answer,
-                    messageId
-                ),
-            },
-        });
-    } else if (!question.isResponseCached) {
-        Object.assign(promises, {
-            question: {
-                ...question,
-                promise: getMongoPromise(
-                    MongodbRead,
-                    MongodbWrite,
-                    question,
-                    messageId
-                ),
-            },
-            answer,
-        });
-    } else if (!answer.isResponseCached) {
-        Object.assign(promises, {
-            answer: {
-                ...answer,
-                promise: getMongoPromise(
-                    MongodbRead,
-                    MongodbWrite,
-                    answer,
-                    messageId
-                ),
-            },
-            question,
-        });
-    } else {
-        // if both keys are present in redis, then there was no need to call this lambda
+    if (answer.isResponseCached && question.isResponseCached) {
+        // both question and answer are cached, so we don't need to call the lambda
         throw new Error('Invalid request');
     }
 
-    return promises;
+    return {
+        question: question.isResponseCached
+            ? question
+            : wrapWithPromise(question),
+        answer: answer.isResponseCached ? answer : wrapWithPromise(answer),
+    };
 };
 
 module.exports = attachPromise;
