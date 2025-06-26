@@ -5,7 +5,7 @@
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
     "local": "nodemon localSetup.js",
-    "zip": "cd src && zip -r ../queryProcessor.zip ./"
+    "zip": "cd src && zip -r ../app.zip ./"
   },
   "keywords": [],
   "author": "",

@@ -1,0 +1,3 @@
+lambdas:
+  - folder: queryProcessor
+    functionName: mongoAcademy-query-processor-development

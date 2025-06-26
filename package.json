@@ -1,0 +1,9 @@
+{
+  "scripts": {
+    "deploy": "node deploy.js"
+  },
+  "dependencies": {
+    "@aws-sdk/client-lambda": "^3.833.0",
+    "js-yaml": "^4.1.0"
+  }
+}
