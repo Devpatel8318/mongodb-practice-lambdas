@@ -1,6 +1,6 @@
-import { sendLogToCloudWatch } from './helper.js';
+const { sendLogToCloudWatch } = require('./helper.js');
 
-export const logToCloudWatch = async ({ data }) => {
+const logToCloudWatch = async ({ data }) => {
     const groupName = 'lambdas';
     const streamName = `queryProcessor-${process.env.NODE_ENV}`;
 
@@ -21,3 +21,5 @@ export const logToCloudWatch = async ({ data }) => {
 
     await sendLogToCloudWatch(groupName, streamName, logEvent, cacheKey, true);
 };
+
+module.exports = { logToCloudWatch };

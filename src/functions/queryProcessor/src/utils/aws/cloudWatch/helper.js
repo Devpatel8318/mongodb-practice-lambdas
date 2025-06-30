@@ -1,11 +1,11 @@
-import {
+const {
     CloudWatchLogsClient,
     PutLogEventsCommand,
     CreateLogGroupCommand,
     CreateLogStreamCommand,
     DescribeLogStreamsCommand,
     PutRetentionPolicyCommand,
-} from '@aws-sdk/client-cloudwatch-logs';
+} = require('@aws-sdk/client-cloudwatch-logs');
 
 const cloudwatch = new CloudWatchLogsClient({ region: 'ap-south-1' });
 
@@ -99,3 +99,5 @@ export const sendLogToCloudWatch = async (
         throw error;
     }
 };
+
+module.exports = { sendLogToCloudWatch };
