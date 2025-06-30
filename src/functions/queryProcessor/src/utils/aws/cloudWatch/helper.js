@@ -47,7 +47,7 @@ const createResources = async (groupName, streamName) => {
     );
 };
 
-export const sendLogToCloudWatch = async (
+const sendLogToCloudWatch = async (
     groupName,
     streamName,
     logEvent,
