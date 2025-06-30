@@ -54,7 +54,7 @@ const sendLogToCloudWatch = async (
     cacheKey,
     retry = true
 ) => {
-    let sequenceToken = await getSequenceToken(groupName, streamName);
+    let sequenceToken;
 
     const attemptSend = async (token) => {
         return cloudwatch.send(
@@ -68,6 +68,8 @@ const sendLogToCloudWatch = async (
     };
 
     try {
+        sequenceToken = await getSequenceToken(groupName, streamName);
+
         await attemptSend(sequenceToken);
     } catch (error) {
         if (error.name === 'InvalidSequenceTokenException') {
