@@ -1,6 +1,7 @@
 const { MongoClient } = require('mongodb');
 const { SQSClient, SendMessageCommand } = require('@aws-sdk/client-sqs');
 const attachPromise = require('./attachPromise');
+const { logToCloudWatch } = require('./utils/aws/cloudWatch/logToCloudWatch');
 
 const client = new SQSClient();
 const mongoUri = process.env.MONGODB_URL;
@@ -77,6 +78,19 @@ exports.handler = async (event) => {
 
         const { question, answer, socketId, submissionId } = body;
         const { questionId } = question;
+
+        await logToCloudWatch({
+            group: 'BACKEND',
+            stream: 'REST',
+            data: {
+                message: 'Message Received in Lambda',
+                questionId,
+                question,
+                answer,
+                socketId,
+                submissionId,
+            },
+        });
 
         const MongoClientRead = await getMongoClient();
         const MongoClientWrite = await getMongoClientWrite();
@@ -157,6 +171,17 @@ exports.handler = async (event) => {
         console.log('newMessageAttributes: ', newMessageAttributes);
 
         await sendMessageToSQS(responseObject, newMessageAttributes);
+        await logToCloudWatch({
+            group: 'BACKEND',
+            stream: 'REST',
+            data: {
+                message: 'Sending Message to Socket Server from Lambda',
+                questionId,
+                submissionId,
+                responseObject,
+                newMessageAttributes,
+            },
+        });
         console.log('Query processed and response sent to SQS');
 
         return {
