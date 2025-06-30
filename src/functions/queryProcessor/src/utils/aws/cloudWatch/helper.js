@@ -7,8 +7,6 @@ import {
     PutRetentionPolicyCommand,
 } from '@aws-sdk/client-cloudwatch-logs';
 
-import { getGroupAndStream } from './groupsAndStreams.js';
-
 const cloudwatch = new CloudWatchLogsClient({ region: 'ap-south-1' });
 
 const getSequenceToken = async (groupName, streamName) => {
@@ -50,17 +48,12 @@ const createResources = async (groupName, streamName) => {
 };
 
 export const sendLogToCloudWatch = async (
-    group,
-    stream,
+    groupName,
+    streamName,
     logEvent,
     cacheKey,
     retry = true
 ) => {
-    const { group: groupName, stream: streamName } = getGroupAndStream(
-        group,
-        stream
-    );
-
     let sequenceToken = await getSequenceToken(groupName, streamName);
 
     const attemptSend = async (token) => {
@@ -95,8 +88,8 @@ export const sendLogToCloudWatch = async (
         ) {
             await createResources(groupName, streamName);
             return await sendLogToCloudWatch(
-                group,
-                stream,
+                groupName,
+                streamName,
                 logEvent,
                 cacheKey,
                 false

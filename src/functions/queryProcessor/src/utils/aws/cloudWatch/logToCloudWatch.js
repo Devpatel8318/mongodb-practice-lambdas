@@ -1,11 +1,9 @@
 import { sendLogToCloudWatch } from './helper.js';
-import { getGroupAndStream } from './groupsAndStreams.js';
 
-export const logToCloudWatch = async ({ group, stream, data }) => {
-    const { group: groupName, stream: streamName } = getGroupAndStream(
-        group,
-        stream
-    );
+export const logToCloudWatch = async ({ data }) => {
+    const groupName = 'lambdas';
+    const streamName = `queryProcessor-${process.env.NODE_ENV}`;
+
     const cacheKey = `${groupName}:${streamName}`;
 
     let message;
@@ -21,5 +19,5 @@ export const logToCloudWatch = async ({ group, stream, data }) => {
         timestamp: Date.now(),
     };
 
-    await sendLogToCloudWatch(group, stream, logEvent, cacheKey, true);
+    await sendLogToCloudWatch(groupName, streamName, logEvent, cacheKey, true);
 };

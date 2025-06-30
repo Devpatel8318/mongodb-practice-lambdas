@@ -80,8 +80,6 @@ exports.handler = async (event) => {
         const { questionId } = question;
 
         await logToCloudWatch({
-            group: 'BACKEND',
-            stream: 'REST',
             data: {
                 message: 'Message Received in Lambda',
                 questionId,
@@ -172,8 +170,6 @@ exports.handler = async (event) => {
 
         await sendMessageToSQS(responseObject, newMessageAttributes);
         await logToCloudWatch({
-            group: 'BACKEND',
-            stream: 'REST',
             data: {
                 message: 'Sending Message to Socket Server from Lambda',
                 questionId,
