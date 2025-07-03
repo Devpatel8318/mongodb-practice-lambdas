@@ -14,8 +14,8 @@ const startMessageConsumer = () => {
                 secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
             },
         }),
-        // pollingWaitTimeMs: 600000, // 10 minutes
-        pollingWaitTimeMs: 5000, // 5 seconds
+        // pollingWaitTimeMs: 1 * 1000 * 60 * 10, // 10 minutes
+        pollingWaitTimeMs: 1 * 1000 * 5, // 5 seconds
         messageAttributeNames: ['All'],
         batchSize: 1,
         handleMessage: async (message) => {
